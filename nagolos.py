@@ -4,11 +4,13 @@ import sys
 from pathlib import Path
 
 import pymupdf
+from bs4 import BeautifulSoup
 from docx import Document
+from ebooklib import epub, ITEM_DOCUMENT
 from ukrainian_word_stress import Stressifier, StressSymbol
 
 SUFFIX = "_nagolos"
-SUPPORTED_FORMATS = {".docx", ".pdf"}
+SUPPORTED_FORMATS = {".docx", ".pdf", ".epub"}
 
 # Configure logging
 logging.basicConfig(
@@ -101,6 +103,8 @@ def process_file(input_file: str, output_file: str | None = None) -> None:
         process_docx(file_path, out_doc, stressify)
     elif ext == ".pdf":
         process_pdf(file_path, out_doc, stressify)
+    elif ext == ".epub":
+        process_epub(file_path, out_doc, stressify)
 
     out_doc.save(output_file)
     logger.info("✓ Processing completed: %s", output_file)
@@ -121,6 +125,7 @@ def process_docx(file_path: Path, out_doc: Document, stressify: Stressifier) -> 
 
     Returns:
         None
+
     Raises:
         Exception: Propagated from file reading errors.
     """
@@ -160,6 +165,44 @@ def process_pdf(file_path: Path, out_doc: Document, stressify: Stressifier) -> N
     except Exception as e:
         logger.error("Error reading PDF file: %s", e)
         raise
+
+
+def process_epub(file_path: Path, out_doc: Document, stressify: Stressifier) -> None:
+    """Extract text from an EPUB and append stressed paragraphs.
+
+    Uses ``ebooklib`` to read the archive and ``BeautifulSoup`` to extract text
+    from each XHTML/HTML document. Every non-empty line of visible text is
+    passed through ``stressify`` and written to ``out_doc``.
+
+    Parameters:
+        file_path (Path): Source EPUB path.
+        out_doc (Document): The ``docx.Document`` object that will receive the
+            transformed text. Mutated in place.
+        stressify (Stressifier): Callable that accepts a string and returns the
+            same string annotated with stress marks.
+
+    Returns:
+        None
+
+    Raises:
+        Exception: Propagated from file reading errors.
+    """
+    try:
+        book = epub.read_epub(file_path)
+    except Exception as e:
+        logger.error("Error reading EPUB file: %s", e)
+        raise
+
+    for item in book.get_items_of_type(ITEM_DOCUMENT):
+        try:
+            content = item.get_body_content().decode("utf-8", errors="ignore")
+        except Exception:
+            continue
+        soup = BeautifulSoup(content, "html.parser")
+        text = soup.get_text(separator="\n")
+        for line in text.splitlines():
+            if line.strip():
+                out_doc.add_paragraph(stressify(line))
 
 
 def parse_arguments() -> argparse.Namespace:
